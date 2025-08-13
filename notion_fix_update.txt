@@ -1,0 +1,4 @@
+Railway Notion Fix Update - 2025-08-13 12:30:00
+Updated NOTION_DATABASE_ID to: 1a575ffaa32f80979917f54cbb6027fb
+Force Railway to restart with new environment variables
+Status: READY FOR DEPLOYMENT
