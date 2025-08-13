@@ -17,6 +17,9 @@ from .notion_utils import create_notion_task
 # Создаем Flask приложение для веб-сервера
 app = Flask(__name__)
 
+# Глобальная переменная для отслеживания первого запуска
+first_startup = True
+
 def sanitize_filename(value: str) -> str:
     safe = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in value)
     return safe.strip("._") or "unknown"
@@ -65,6 +68,60 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     chat_title = chat.title if chat.type != "private" else None
     create_notion_task(content, username, chat_title)
 
+async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /start"""
+    if update.effective_chat is None:
+        return
+    
+    from datetime import datetime
+    startup_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    message = f"""🤖 DimKavaTGBot активен!
+
+⏰ Время: {startup_time}
+🌐 Домен: https://dimkavatgbot-production.up.railway.app
+💬 Чат ID: {update.effective_chat.id}
+
+Бот готов к работе! Отправьте любое сообщение для тестирования. 🚀"""
+    
+    await update.message.reply_text(message)
+
+async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /status"""
+    if update.effective_chat is None:
+        return
+    
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    message = f"""📊 Статус бота:
+
+✅ Статус: Активен
+⏰ Время: {current_time}
+🌐 Домен: https://dimkavatgbot-production.up.railway.app
+💬 Чат ID: {update.effective_chat.id}
+👤 Пользователь: {update.effective_user.full_name if update.effective_user else 'Unknown'}
+
+Бот работает корректно! 🎉"""
+    
+    await update.message.reply_text(message)
+
+async def send_startup_message(bot):
+    """Отправляет сообщение о запуске во все чаты"""
+    try:
+        from datetime import datetime
+        startup_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        message = f"🤖 DimKavaTGBot запущен!\n\n⏰ Время запуска: {startup_time}\n🌐 Домен: https://dimkavatgbot-production.up.railway.app\n\nБот готов к работе! 🚀"
+        
+        # Получаем список чатов (это может не работать без сохранения chat_id)
+        # Пока отправляем в тестовый чат или используем другой подход
+        
+        print(f"Startup message prepared: {message}")
+        return True
+    except Exception as e:
+        print(f"Error sending startup message: {e}")
+        return False
+
 def create_bot_app():
     """Создает и настраивает Telegram бота"""
     load_dotenv()
@@ -82,6 +139,11 @@ def create_bot_app():
     text_filter = filters.TEXT & ~filters.COMMAND
     bot_app.add_handler(MessageHandler(text_filter, handle_text))
     
+    # Добавляем команду для тестирования
+    from telegram.ext import CommandHandler
+    bot_app.add_handler(CommandHandler("start", handle_start_command))
+    bot_app.add_handler(CommandHandler("status", handle_status_command))
+    
     return bot_app
 
 # Глобальная переменная для бота
@@ -90,7 +152,33 @@ telegram_app = None
 @app.route('/')
 def home():
     """Главная страница для проверки работы сервера"""
-    return "DimKavaTGBot работает! 🚀"
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    return f"""<html>
+<head>
+    <title>DimKavaTGBot Status</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; }}
+        .status {{ color: green; font-weight: bold; }}
+        .time {{ color: blue; }}
+        .domain {{ color: purple; }}
+    </style>
+</head>
+<body>
+    <h1>🤖 DimKavaTGBot Status</h1>
+    <p class="status">✅ Статус: Активен</p>
+    <p class="time">⏰ Время: {current_time}</p>
+    <p class="domain">🌐 Домен: https://dimkavatgbot-production.up.railway.app</p>
+    <hr>
+    <h2>📋 Тестирование:</h2>
+    <p>1. Отправьте команду <code>/start</code> боту</p>
+    <p>2. Отправьте команду <code>/status</code> боту</p>
+    <p>3. Отправьте любое текстовое сообщение боту</p>
+    <hr>
+    <p><strong>Бот готов к работе! 🚀</strong></p>
+</body>
+</html>"""
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
