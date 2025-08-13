@@ -321,6 +321,10 @@ def webhook():
         
         # Обрабатываем обновление асинхронно
         async def process_update_async():
+            # Инициализируем приложение если еще не инициализировано
+            if not app.telegram_app._initialized:
+                await app.telegram_app.initialize()
+            
             await app.telegram_app.process_update(update)
         
         # Запускаем асинхронную функцию
