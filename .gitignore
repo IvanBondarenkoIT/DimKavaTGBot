@@ -212,6 +212,6 @@ cython_debug/
 *notion*
 *NOTION*
 
-# Telegram bot tokens
-*bot*
-*BOT*
+# Telegram bot tokens (but not the bot folder)
+*bot_token*
+*BOT_TOKEN*
