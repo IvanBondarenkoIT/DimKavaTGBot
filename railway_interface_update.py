@@ -295,18 +295,39 @@ def webhook():
     """Обработчик вебхуков от Telegram"""
     try:
         from telegram import Update
-        from bot.__main__ import create_bot_app
+        from telegram.ext import Application
+        import os
         
-        # Создаем бота если еще не создан
+        # Получаем токен бота
+        bot_token = os.getenv('BOT_TOKEN')
+        if not bot_token:
+            print("BOT_TOKEN не настроен")
+            return 'Error: BOT_TOKEN not configured', 500
+        
+        # Создаем приложение бота если еще не создано
         if not hasattr(app, 'telegram_app'):
+            from bot.__main__ import create_bot_app
             app.telegram_app = create_bot_app()
         
-        # Обрабатываем обновление от Telegram
-        update = Update.de_json(request.get_json(), app.telegram_app.bot)
+        # Получаем данные от Telegram
+        update_data = request.get_json()
+        if not update_data:
+            print("Пустые данные от Telegram")
+            return 'Error: Empty data', 400
+        
+        # Создаем объект Update
+        update = Update.de_json(update_data, app.telegram_app.bot)
+        
+        # Обрабатываем обновление
         app.telegram_app.process_update(update)
+        
+        print(f"Обработано обновление: {update.update_id}")
         return 'OK'
+        
     except Exception as e:
         print(f"Ошибка обработки вебхука: {e}")
+        import traceback
+        traceback.print_exc()
         return 'Error', 500
 
 if __name__ == "__main__":
