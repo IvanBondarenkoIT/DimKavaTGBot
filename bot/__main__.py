@@ -116,7 +116,16 @@ def set_webhook():
         telegram_app = create_bot_app()
     
     # Получаем URL для вебхука
-    webhook_url = os.getenv('WEBHOOK_URL', 'https://your-app-name.railway.app/webhook')
+    # Пытаемся получить из переменной окружения, иначе используем текущий домен
+    webhook_url = os.getenv('WEBHOOK_URL')
+    if not webhook_url:
+        # Определяем домен автоматически
+        if request:
+            # В контексте веб-запроса
+            webhook_url = f"{request.url_root.rstrip('/')}/webhook"
+        else:
+            # Fallback
+            webhook_url = 'https://dimkavatgbot-production.up.railway.app/webhook'
     
     # Для тестирования просто возвращаем успешный ответ
     # В реальном деплое вебхук будет установлен через Telegram API
