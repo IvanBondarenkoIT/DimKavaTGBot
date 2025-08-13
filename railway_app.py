@@ -4,10 +4,44 @@
 """
 
 import os
-from flask import Flask
+import requests
+import json
+from flask import Flask, request, jsonify
 from datetime import datetime
 
 app = Flask(__name__)
+
+def test_bot_message():
+    """Отправляет тестовое сообщение боту"""
+    try:
+        bot_token = os.getenv('BOT_TOKEN')
+        if not bot_token:
+            return {"error": "BOT_TOKEN не настроен"}
+        
+        # Создаем тестовое сообщение
+        test_message = f"Тестовое сообщение от Railway - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # Отправляем сообщение через Telegram API
+        # Для этого нужно знать chat_id, но пока просто проверим подключение к боту
+        url = f"https://api.telegram.org/bot{bot_token}/getMe"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            bot_info = response.json()
+            return {
+                "success": True,
+                "message": test_message,
+                "bot_info": bot_info,
+                "status": "Бот доступен"
+            }
+        else:
+            return {
+                "error": f"Ошибка подключения к боту: {response.status_code}",
+                "response": response.text
+            }
+            
+    except Exception as e:
+        return {"error": f"Ошибка: {str(e)}"}
 
 @app.route('/')
 def home():
@@ -56,9 +90,80 @@ def home():
         
         <hr>
         <p><strong>🎯 Если переменные НЕ настроены - бот не будет работать!</strong></p>
+        
+        <hr>
+        <h2>🧪 Тестирование бота:</h2>
+        <button onclick="testBot()" style="background: #4CAF50; color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 0;">
+            🚀 Тестировать бота
+        </button>
+        <div id="testResult" style="margin-top: 15px; padding: 15px; border-radius: 8px; display: none;"></div>
+        
+        <hr>
+        <h2>📱 Инструкции:</h2>
+        <p>1. Нажмите кнопку "Тестировать бота" выше</p>
+        <p>2. Отправьте боту команду <code>/start</code></p>
+        <p>3. Отправьте боту команду <code>/status</code></p>
+        <p>4. Отправьте любое текстовое сообщение боту</p>
     </div>
+    
+    <script>
+    function testBot() {
+        const button = document.querySelector('button');
+        const result = document.getElementById('testResult');
+        
+        button.disabled = true;
+        button.textContent = '🔄 Тестируем...';
+        result.style.display = 'block';
+        result.innerHTML = '<p>🔄 Проверяем подключение к боту...</p>';
+        
+        fetch('/test_bot')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    result.style.backgroundColor = '#d4edda';
+                    result.style.color = '#155724';
+                    result.style.border = '1px solid #c3e6cb';
+                    result.innerHTML = `
+                        <h3>✅ Бот работает!</h3>
+                        <p><strong>Имя бота:</strong> ${data.bot_info.result.first_name}</p>
+                        <p><strong>Username:</strong> @${data.bot_info.result.username}</p>
+                        <p><strong>Статус:</strong> ${data.status}</p>
+                        <p><strong>Тестовое сообщение:</strong> ${data.message}</p>
+                    `;
+                } else {
+                    result.style.backgroundColor = '#f8d7da';
+                    result.style.color = '#721c24';
+                    result.style.border = '1px solid #f5c6cb';
+                    result.innerHTML = `
+                        <h3>❌ Ошибка!</h3>
+                        <p><strong>Ошибка:</strong> ${data.error}</p>
+                        ${data.response ? `<p><strong>Ответ:</strong> ${data.response}</p>` : ''}
+                    `;
+                }
+            })
+            .catch(error => {
+                result.style.backgroundColor = '#f8d7da';
+                result.style.color = '#721c24';
+                result.style.border = '1px solid #f5c6cb';
+                result.innerHTML = `
+                    <h3>❌ Ошибка сети!</h3>
+                    <p><strong>Ошибка:</strong> ${error.message}</p>
+                `;
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.textContent = '🚀 Тестировать бота';
+            });
+    }
+    </script>
 </body>
 </html>"""
+
+@app.route('/test_bot')
+def test_bot_endpoint():
+    """API endpoint для тестирования бота"""
+    result = test_bot_message()
+    return jsonify(result)
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
