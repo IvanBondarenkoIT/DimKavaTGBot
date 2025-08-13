@@ -288,7 +288,26 @@ def test_notion_endpoint():
             'success': False, 
             'error': f'Ошибка: {str(e)}',
             'details': 'Проверьте настройки Notion интеграции'
-        })
+                 })
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Обработчик вебхуков от Telegram"""
+    try:
+        from telegram import Update
+        from bot.__main__ import create_bot_app
+        
+        # Создаем бота если еще не создан
+        if not hasattr(app, 'telegram_app'):
+            app.telegram_app = create_bot_app()
+        
+        # Обрабатываем обновление от Telegram
+        update = Update.de_json(request.get_json(), app.telegram_app.bot)
+        app.telegram_app.process_update(update)
+        return 'OK'
+    except Exception as e:
+        print(f"Ошибка обработки вебхука: {e}")
+        return 'Error', 500
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
