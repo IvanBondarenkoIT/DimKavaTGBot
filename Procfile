@@ -1,1 +1,1 @@
-web: python wsgi.py
+web: python simple_test.py
