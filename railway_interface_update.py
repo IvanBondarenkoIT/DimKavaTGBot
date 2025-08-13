@@ -297,6 +297,7 @@ def webhook():
         from telegram import Update
         from telegram.ext import Application
         import os
+        import asyncio
         
         # Получаем токен бота
         bot_token = os.getenv('BOT_TOKEN')
@@ -318,8 +319,12 @@ def webhook():
         # Создаем объект Update
         update = Update.de_json(update_data, app.telegram_app.bot)
         
-        # Обрабатываем обновление
-        app.telegram_app.process_update(update)
+        # Обрабатываем обновление асинхронно
+        async def process_update_async():
+            await app.telegram_app.process_update(update)
+        
+        # Запускаем асинхронную функцию
+        asyncio.run(process_update_async())
         
         print(f"Обработано обновление: {update.update_id}")
         return 'OK'
