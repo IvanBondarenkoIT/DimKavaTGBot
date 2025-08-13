@@ -208,9 +208,9 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Notion API tokens and database IDs
-*notion*
-*NOTION*
+# Notion API tokens and database IDs (but not the notion_utils.py file)
+*notion_token*
+*NOTION_TOKEN*
 
 # Telegram bot tokens (but not the bot folder)
 *bot_token*
