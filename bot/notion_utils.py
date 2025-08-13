@@ -24,13 +24,9 @@ def create_notion_task(text: str, username: str, chat_title: str = None) -> bool
     # Определяем заголовок задачи
     title = text[:100] + "..." if len(text) > 100 else text
     
-    # Создаем свойства для задачи
-    # Используем настраиваемое название свойства или стандартное "Name"
-    title_property = os.getenv("NOTION_TITLE_PROPERTY", "Name")
-    status_property = os.getenv("NOTION_STATUS_PROPERTY", "Status")
-    
+    # Создаем свойства для задачи с правильными названиями
     properties = {
-        title_property: {
+        "Task name": {  # Используем "Task name" для названия
             "title": [
                 {
                     "text": {
@@ -38,27 +34,19 @@ def create_notion_task(text: str, username: str, chat_title: str = None) -> bool
                     }
                 }
             ]
-        }
-    }
-    
-    # Добавляем статус только если он настроен
-    if status_property:
-        # Получаем правильное название статуса из переменной окружения или используем по умолчанию
-        default_status = os.getenv("NOTION_DEFAULT_STATUS", "Not started")
-        properties[status_property] = {
+        },
+        "Status": {  # Используем "Status" для статуса
             "status": {
-                "name": default_status
+                "name": "Not started"
             }
-        }
-    
-    # Добавляем тег с источником (Telegram)
-    if "Tags" in os.getenv("NOTION_DATABASE_PROPERTIES", ""):
-        properties["Tags"] = {
+        },
+        "Task type": {  # Используем "Task type" для тегов
             "multi_select": [
                 {"name": "Telegram"},
                 {"name": username}
             ]
         }
+    }
     
     # Создаем описание с полным текстом
     children = [
