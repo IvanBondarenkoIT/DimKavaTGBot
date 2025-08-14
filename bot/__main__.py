@@ -100,6 +100,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Создаем задачу в Notion
     chat_title = chat.title if chat.type != "private" else None
     create_notion_task(content, username, chat_title)
+    
+    # Отправляем подтверждение
+    confirmation_message = f"✅ Сообщение сохранено и задача создана в Notion!\n\n📝 Текст: {content[:100]}{'...' if len(content) > 100 else ''}\n👤 Пользователь: {username}\n⏰ Время: {timestamp.strftime('%H:%M:%S')}"
+    
+    # Используем синхронную отправку
+    chat_id = chat.id
+    executor.submit(send_message_sync, chat_id, confirmation_message)
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /start"""
@@ -117,7 +124,9 @@ async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 Бот готов к работе! Отправьте любое сообщение для тестирования. 🚀"""
     
-    await update.message.reply_text(message)
+    # Используем синхронную отправку вместо асинхронной
+    chat_id = update.effective_chat.id
+    executor.submit(send_message_sync, chat_id, message)
 
 async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /status"""
@@ -137,7 +146,9 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 Бот работает корректно! 🎉"""
     
-    await update.message.reply_text(message)
+    # Используем синхронную отправку вместо асинхронной
+    chat_id = update.effective_chat.id
+    executor.submit(send_message_sync, chat_id, message)
 
 async def send_startup_message(bot):
     """Отправляет сообщение о запуске во все чаты"""
@@ -503,6 +514,33 @@ def process_update_async(update):
         except:
             pass
 
+def send_message_sync(chat_id, text):
+    """Синхронная отправка сообщения через Telegram API"""
+    try:
+        bot_token = os.getenv('BOT_TOKEN')
+        if not bot_token:
+            print("❌ BOT_TOKEN not available")
+            return False
+            
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        
+        response = requests.post(url, json=data, timeout=10)
+        if response.status_code == 200:
+            print(f"✅ Message sent to {chat_id}")
+            return True
+        else:
+            print(f"❌ Failed to send message: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error sending message: {e}")
+        return False
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Обработчик вебхуков от Telegram"""
@@ -511,7 +549,7 @@ def webhook():
     try:
         # Проверяем состояние бота
         if bot_error_count > 5:
-            print(f"Too many errors ({bot_error_count}), resetting bot")
+            print(f"🔄 Too many errors ({bot_error_count}), resetting bot")
             bot_error_count = 0
             # Можно добавить переинициализацию бота здесь
         
@@ -521,11 +559,12 @@ def webhook():
         # Запускаем обработку в отдельном потоке
         executor.submit(process_update_async, update)
         
+        print(f"✅ Webhook received and queued for processing")
         return 'OK'
                 
     except Exception as e:
         bot_error_count += 1
-        print(f"Ошибка обработки вебхука: {e}")
+        print(f"❌ Ошибка обработки вебхука: {e}")
         return 'Error', 500
 
 @app.route('/test_bot')
