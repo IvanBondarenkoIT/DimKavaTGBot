@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import requests
+import asyncio
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +20,29 @@ app = Flask(__name__)
 
 # Глобальная переменная для отслеживания первого запуска
 first_startup = True
+
+# Инициализируем бота при запуске приложения
+with app.app_context():
+    try:
+        initialize_bot()
+        print("Bot initialized at startup")
+    except Exception as e:
+        print(f"Error initializing bot at startup: {e}")
+
+# Глобальная переменная для бота - инициализируем как None
+telegram_app = None
+
+def initialize_bot():
+    """Инициализирует бота при запуске приложения"""
+    global telegram_app
+    try:
+        if telegram_app is None:
+            telegram_app = create_bot_app()
+            print("Bot initialized successfully")
+        return telegram_app
+    except Exception as e:
+        print(f"Failed to initialize bot: {e}")
+        return None
 
 def sanitize_filename(value: str) -> str:
     safe = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in value)
@@ -146,8 +170,9 @@ def create_bot_app():
     
     return bot_app
 
-# Глобальная переменная для бота
-telegram_app = None
+def get_or_create_bot_app():
+    """Получает существующий или создает новый экземпляр бота"""
+    return initialize_bot()
 
 @app.route('/')
 def home():
@@ -330,15 +355,18 @@ def home():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Обработчик вебхуков от Telegram"""
-    global telegram_app
-    if telegram_app is None:
-        telegram_app = create_bot_app()
-    
     try:
+        # Получаем или создаем экземпляр бота
+        bot_app = get_or_create_bot_app()
+        
         # Обрабатываем обновление от Telegram
-        update = Update.de_json(request.get_json(), telegram_app.bot)
-        telegram_app.process_update(update)
+        update = Update.de_json(request.get_json(), bot_app.bot)
+        
+        # Просто обрабатываем обновление - telegram.ext автоматически создаст event loop если нужно
+        bot_app.process_update(update)
+        
         return 'OK'
+                
     except Exception as e:
         print(f"Ошибка обработки вебхука: {e}")
         return 'Error', 500
@@ -445,28 +473,51 @@ def test_notion_endpoint():
             'details': 'Проверьте настройки Notion интеграции'
         })
 
+@app.route('/health')
+def health_check():
+    """Проверка здоровья приложения"""
+    try:
+        bot_app = get_or_create_bot_app()
+        bot_status = "OK" if bot_app else "ERROR"
+        
+        return jsonify({
+            'status': 'healthy',
+            'bot_status': bot_status,
+            'timestamp': datetime.now().isoformat(),
+            'environment': 'production' if os.getenv('RAILWAY_ENVIRONMENT') else 'development'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
 @app.route('/set_webhook')
 def set_webhook():
     """Устанавливает вебхук для бота"""
-    global telegram_app
-    if telegram_app is None:
-        telegram_app = create_bot_app()
-    
-    # Получаем URL для вебхука
-    # Пытаемся получить из переменной окружения, иначе используем текущий домен
-    webhook_url = os.getenv('WEBHOOK_URL')
-    if not webhook_url:
-        # Определяем домен автоматически
-        if request:
-            # В контексте веб-запроса
-            webhook_url = f"{request.url_root.rstrip('/')}/webhook"
-        else:
-            # Fallback
-            webhook_url = 'https://dimkavatgbot-production.up.railway.app/webhook'
-    
-    # Для тестирования просто возвращаем успешный ответ
-    # В реальном деплое вебхук будет установлен через Telegram API
-    return f'Webhook готов к установке: {webhook_url}'
+    try:
+        # Получаем или создаем экземпляр бота
+        bot_app = get_or_create_bot_app()
+        
+        # Получаем URL для вебхука
+        # Пытаемся получить из переменной окружения, иначе используем текущий домен
+        webhook_url = os.getenv('WEBHOOK_URL')
+        if not webhook_url:
+            # Определяем домен автоматически
+            if request:
+                # В контексте веб-запроса
+                webhook_url = f"{request.url_root.rstrip('/')}/webhook"
+            else:
+                # Fallback
+                webhook_url = 'https://dimkavatgbot-production.up.railway.app/webhook'
+        
+        # Для тестирования просто возвращаем успешный ответ
+        # В реальном деплое вебхук будет установлен через Telegram API
+        return f'Webhook готов к установке: {webhook_url}'
+    except Exception as e:
+        print(f"Error in set_webhook: {e}")
+        return f'Error setting webhook: {e}', 500
 
 def main() -> None:
     """Основная функция для локального запуска"""
