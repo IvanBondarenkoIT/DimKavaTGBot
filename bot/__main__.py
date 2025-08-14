@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import requests
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -31,6 +33,13 @@ with app.app_context():
 
 # Глобальная переменная для бота - инициализируем как None
 telegram_app = None
+
+# ThreadPoolExecutor для обработки асинхронных операций
+executor = ThreadPoolExecutor(max_workers=4)
+
+# Флаг для отслеживания состояния бота
+bot_running = False
+bot_error_count = 0
 
 def initialize_bot():
     """Инициализирует бота при запуске приложения"""
@@ -234,6 +243,16 @@ def home():
          </button>
          <div id="testResult" style="margin-top: 15px; padding: 15px; border-radius: 8px; display: none;"></div>
          <div id="notionResult" style="margin-top: 15px; padding: 15px; border-radius: 8px; display: none;"></div>
+         
+         <hr>
+         <h2>🎛️ Управление ботом:</h2>
+         <button onclick="restartBot()" style="background: #FF9800; color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 0;">
+             🔄 Перезапустить бота
+         </button>
+         <button onclick="resetErrors()" style="background: #9C27B0; color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 0; margin-left: 10px;">
+             🔧 Сбросить ошибки
+         </button>
+         <div id="botControlResult" style="margin-top: 15px; padding: 15px; border-radius: 8px; display: none;"></div>
         
         <hr>
         <h2>📱 Инструкции:</h2>
@@ -348,26 +367,164 @@ def home():
                  button.textContent = '📝 Создать тестовый таск в Notion';
              }});
      }}
+     
+     function restartBot() {{
+         var button = document.querySelector('button[onclick="restartBot()"]');
+         var result = document.getElementById('botControlResult');
+         
+         button.disabled = true;
+         button.textContent = '🔄 Перезапускаем...';
+         result.style.display = 'block';
+         result.innerHTML = '<p>🔄 Перезапускаем бота...</p>';
+         
+         fetch('/restart_bot')
+             .then(response => response.json())
+             .then(data => {{
+                 if (data.success) {{
+                     result.style.backgroundColor = '#d4edda';
+                     result.style.color = '#155724';
+                     result.style.border = '1px solid #c3e6cb';
+                     result.innerHTML = `
+                         <h3>✅ Бот перезапущен!</h3>
+                         <p><strong>Статус:</strong> ${{data.status}}</p>
+                         <p><strong>Время:</strong> ${{data.timestamp}}</p>
+                     `;
+                 }} else {{
+                     result.style.backgroundColor = '#f8d7da';
+                     result.style.color = '#721c24';
+                     result.style.border = '1px solid #f5c6cb';
+                     result.innerHTML = `
+                         <h3>❌ Ошибка перезапуска!</h3>
+                         <p><strong>Ошибка:</strong> ${{data.error}}</p>
+                     `;
+                 }}
+             }})
+             .catch(error => {{
+                 result.style.backgroundColor = '#f8d7da';
+                 result.style.color = '#721c24';
+                 result.style.border = '1px solid #f5c6cb';
+                 result.innerHTML = `
+                     <h3>❌ Ошибка сети!</h3>
+                     <p><strong>Ошибка:</strong> ${{error.message}}</p>
+                 `;
+             }})
+             .finally(() => {{
+                 button.disabled = false;
+                 button.textContent = '🔄 Перезапустить бота';
+             }});
+     }}
+     
+     function resetErrors() {{
+         var button = document.querySelector('button[onclick="resetErrors()"]');
+         var result = document.getElementById('botControlResult');
+         
+         button.disabled = true;
+         button.textContent = '🔧 Сбрасываем...';
+         result.style.display = 'block';
+         result.innerHTML = '<p>🔧 Сбрасываем счетчик ошибок...</p>';
+         
+         fetch('/reset_errors')
+             .then(response => response.json())
+             .then(data => {{
+                 if (data.success) {{
+                     result.style.backgroundColor = '#d4edda';
+                     result.style.color = '#155724';
+                     result.style.border = '1px solid #c3e6cb';
+                     result.innerHTML = `
+                         <h3>✅ Ошибки сброшены!</h3>
+                         <p><strong>Статус:</strong> ${{data.status}}</p>
+                         <p><strong>Счетчик ошибок:</strong> ${{data.error_count}}</p>
+                     `;
+                 }} else {{
+                     result.style.backgroundColor = '#f8d7da';
+                     result.style.color = '#721c24';
+                     result.style.border = '1px solid #f5c6cb';
+                     result.innerHTML = `
+                         <h3>❌ Ошибка сброса!</h3>
+                         <p><strong>Ошибка:</strong> ${{data.error}}</p>
+                     `;
+                 }}
+             }})
+             .catch(error => {{
+                 result.style.backgroundColor = '#f8d7da';
+                 result.style.color = '#721c24';
+                 result.style.border = '1px solid #f5c6cb';
+                 result.innerHTML = `
+                     <h3>❌ Ошибка сети!</h3>
+                     <p><strong>Ошибка:</strong> ${{error.message}}</p>
+                 `;
+             }})
+             .finally(() => {{
+                 button.disabled = false;
+                 button.textContent = '🔧 Сбросить ошибки';
+             }});
+     }}
     </script>
 </body>
 </html>"""
 
+def process_update_async(update):
+    """Обрабатывает обновление в отдельном потоке"""
+    global bot_error_count, telegram_app
+    try:
+        # Создаем новый event loop для этого потока
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Получаем бота
+        bot_app = get_or_create_bot_app()
+        if bot_app:
+            # Обрабатываем обновление
+            bot_app.process_update(update)
+            bot_error_count = 0  # Сбрасываем счетчик ошибок при успехе
+            print(f"✅ Update processed successfully")
+        else:
+            print("❌ Bot app not available")
+            bot_error_count += 1
+            
+    except Exception as e:
+        bot_error_count += 1
+        print(f"❌ Error processing update in thread: {e}")
+        
+        # Если слишком много ошибок, переинициализируем бота
+        if bot_error_count > 10:
+            print(f"🔄 Too many errors ({bot_error_count}), reinitializing bot")
+            try:
+                telegram_app = None
+                bot_app = get_or_create_bot_app()
+                if bot_app:
+                    bot_error_count = 0
+                    print("✅ Bot reinitialized successfully")
+            except Exception as reinit_error:
+                print(f"❌ Failed to reinitialize bot: {reinit_error}")
+    finally:
+        try:
+            loop.close()
+        except:
+            pass
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Обработчик вебхуков от Telegram"""
+    global bot_running, bot_error_count
+    
     try:
-        # Получаем или создаем экземпляр бота
-        bot_app = get_or_create_bot_app()
+        # Проверяем состояние бота
+        if bot_error_count > 5:
+            print(f"Too many errors ({bot_error_count}), resetting bot")
+            bot_error_count = 0
+            # Можно добавить переинициализацию бота здесь
         
         # Обрабатываем обновление от Telegram
-        update = Update.de_json(request.get_json(), bot_app.bot)
+        update = Update.de_json(request.get_json(), None)  # Не передаем bot для избежания проблем
         
-        # Просто обрабатываем обновление - telegram.ext автоматически создаст event loop если нужно
-        bot_app.process_update(update)
+        # Запускаем обработку в отдельном потоке
+        executor.submit(process_update_async, update)
         
         return 'OK'
                 
     except Exception as e:
+        bot_error_count += 1
         print(f"Ошибка обработки вебхука: {e}")
         return 'Error', 500
 
@@ -476,6 +633,7 @@ def test_notion_endpoint():
 @app.route('/health')
 def health_check():
     """Проверка здоровья приложения"""
+    global bot_error_count
     try:
         bot_app = get_or_create_bot_app()
         bot_status = "OK" if bot_app else "ERROR"
@@ -483,6 +641,7 @@ def health_check():
         return jsonify({
             'status': 'healthy',
             'bot_status': bot_status,
+            'error_count': bot_error_count,
             'timestamp': datetime.now().isoformat(),
             'environment': 'production' if os.getenv('RAILWAY_ENVIRONMENT') else 'development'
         })
@@ -490,8 +649,59 @@ def health_check():
         return jsonify({
             'status': 'unhealthy',
             'error': str(e),
+            'error_count': bot_error_count,
             'timestamp': datetime.now().isoformat()
         }), 500
+
+@app.route('/restart_bot')
+def restart_bot():
+    """Перезапускает бота"""
+    global telegram_app, bot_error_count
+    try:
+        # Сбрасываем глобальные переменные
+        telegram_app = None
+        bot_error_count = 0
+        
+        # Переинициализируем бота
+        bot_app = get_or_create_bot_app()
+        
+        if bot_app:
+            return jsonify({
+                'success': True,
+                'status': 'Bot restarted successfully',
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to restart bot'
+            })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/reset_errors')
+def reset_errors():
+    """Сбрасывает счетчик ошибок"""
+    global bot_error_count
+    try:
+        old_count = bot_error_count
+        bot_error_count = 0
+        
+        return jsonify({
+            'success': True,
+            'status': 'Error counter reset',
+            'error_count': bot_error_count,
+            'previous_count': old_count,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 @app.route('/set_webhook')
 def set_webhook():

@@ -8,7 +8,12 @@ import requests
 
 def check_webhook():
     """Проверяет статус вебхука"""
-    bot_token = "8215668407:AAFSE1_a1DYERwkrHf8nuwK-kAlYaT4wjO8"
+    bot_token = os.getenv('BOT_TOKEN')
+    
+    if not bot_token:
+        print("❌ BOT_TOKEN не настроен!")
+        print("Добавьте BOT_TOKEN в переменные окружения")
+        return
     
     url = f"https://api.telegram.org/bot{bot_token}/getWebhookInfo"
     
