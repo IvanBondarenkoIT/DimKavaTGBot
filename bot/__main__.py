@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import requests
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +22,36 @@ app = Flask(__name__)
 
 # Глобальная переменная для отслеживания первого запуска
 first_startup = True
+
+# Инициализируем бота при запуске приложения
+with app.app_context():
+    try:
+        initialize_bot()
+        print("Bot initialized at startup")
+    except Exception as e:
+        print(f"Error initializing bot at startup: {e}")
+
+# Глобальная переменная для бота - инициализируем как None
+telegram_app = None
+
+# ThreadPoolExecutor для обработки асинхронных операций
+executor = ThreadPoolExecutor(max_workers=4)
+
+# Флаг для отслеживания состояния бота
+bot_running = False
+bot_error_count = 0
+
+def initialize_bot():
+    """Инициализирует бота при запуске приложения"""
+    global telegram_app
+    try:
+        if telegram_app is None:
+            telegram_app = create_bot_app()
+            print("Bot initialized successfully")
+        return telegram_app
+    except Exception as e:
+        print(f"Failed to initialize bot: {e}")
+        return None
 
 def sanitize_filename(value: str) -> str:
     safe = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in value)
@@ -67,6 +100,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Создаем задачу в Notion
     chat_title = chat.title if chat.type != "private" else None
     create_notion_task(content, username, chat_title)
+    
+    # Отправляем подтверждение
+    confirmation_message = f"✅ Сообщение сохранено и задача создана в Notion!\n\n📝 Текст: {content[:100]}{'...' if len(content) > 100 else ''}\n👤 Пользователь: {username}\n⏰ Время: {timestamp.strftime('%H:%M:%S')}"
+    
+    # Используем синхронную отправку
+    chat_id = chat.id
+    executor.submit(send_message_sync, chat_id, confirmation_message)
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /start"""
@@ -84,7 +124,9 @@ async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 Бот готов к работе! Отправьте любое сообщение для тестирования. 🚀"""
     
-    await update.message.reply_text(message)
+    # Используем синхронную отправку вместо асинхронной
+    chat_id = update.effective_chat.id
+    executor.submit(send_message_sync, chat_id, message)
 
 async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /status"""
@@ -104,7 +146,9 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 Бот работает корректно! 🎉"""
     
-    await update.message.reply_text(message)
+    # Используем синхронную отправку вместо асинхронной
+    chat_id = update.effective_chat.id
+    executor.submit(send_message_sync, chat_id, message)
 
 async def send_startup_message(bot):
     """Отправляет сообщение о запуске во все чаты"""
@@ -146,8 +190,9 @@ def create_bot_app():
     
     return bot_app
 
-# Глобальная переменная для бота
-telegram_app = None
+def get_or_create_bot_app():
+    """Получает существующий или создает новый экземпляр бота"""
+    return initialize_bot()
 
 @app.route('/')
 def home():
@@ -199,12 +244,26 @@ def home():
         <hr>
         <p><strong>🎯 Если переменные НЕ настроены - бот не будет работать!</strong></p>
         
-        <hr>
-        <h2>🧪 Тестирование бота:</h2>
-        <button onclick="testBot()" style="background: #4CAF50; color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 0;">
-            🚀 Тестировать бота
-        </button>
-        <div id="testResult" style="margin-top: 15px; padding: 15px; border-radius: 8px; display: none;"></div>
+                 <hr>
+         <h2>🧪 Тестирование бота:</h2>
+         <button onclick="testBot()" style="background: #4CAF50; color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 0;">
+             🚀 Тестировать бота
+         </button>
+         <button onclick="testNotion()" style="background: #2196F3; color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 0; margin-left: 10px;">
+             📝 Создать тестовый таск в Notion
+         </button>
+         <div id="testResult" style="margin-top: 15px; padding: 15px; border-radius: 8px; display: none;"></div>
+         <div id="notionResult" style="margin-top: 15px; padding: 15px; border-radius: 8px; display: none;"></div>
+         
+         <hr>
+         <h2>🎛️ Управление ботом:</h2>
+         <button onclick="restartBot()" style="background: #FF9800; color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 0;">
+             🔄 Перезапустить бота
+         </button>
+         <button onclick="resetErrors()" style="background: #9C27B0; color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 0; margin-left: 10px;">
+             🔧 Сбросить ошибки
+         </button>
+         <div id="botControlResult" style="margin-top: 15px; padding: 15px; border-radius: 8px; display: none;"></div>
         
         <hr>
         <h2>📱 Инструкции:</h2>
@@ -215,72 +274,297 @@ def home():
     </div>
     
     <script>
-    function testBot() {{
-        var button = document.querySelector('button');
-        var result = document.getElementById('testResult');
-        
-        button.disabled = true;
-        button.textContent = '🔄 Тестируем...';
-        result.style.display = 'block';
-        result.innerHTML = '<p>🔄 Проверяем подключение к боту...</p>';
-        
-        fetch('/test_bot')
-            .then(response => response.json())
-            .then(data => {{
-                if (data.success) {{
-                    result.style.backgroundColor = '#d4edda';
-                    result.style.color = '#155724';
-                    result.style.border = '1px solid #c3e6cb';
-                    result.innerHTML = `
-                        <h3>✅ Бот работает!</h3>
-                        <p><strong>Имя бота:</strong> ${{data.bot_info.result.first_name}}</p>
-                        <p><strong>Username:</strong> @${{data.bot_info.result.username}}</p>
-                        <p><strong>Статус:</strong> ${{data.status}}</p>
-                        <p><strong>Тестовое сообщение:</strong> ${{data.message}}</p>
-                    `;
-                }} else {{
-                    result.style.backgroundColor = '#f8d7da';
-                    result.style.color = '#721c24';
-                    result.style.border = '1px solid #f5c6cb';
-                    result.innerHTML = `
-                        <h3>❌ Ошибка!</h3>
-                        <p><strong>Ошибка:</strong> ${{data.error}}</p>
-                        ${{data.response ? `<p><strong>Ответ:</strong> ${{data.response}}</p>` : ''}}
-                    `;
-                }}
-            }})
-            .catch(error => {{
-                result.style.backgroundColor = '#f8d7da';
-                result.style.color = '#721c24';
-                result.style.border = '1px solid #f5c6cb';
-                result.innerHTML = `
-                    <h3>❌ Ошибка сети!</h3>
-                    <p><strong>Ошибка:</strong> ${{error.message}}</p>
-                `;
-            }})
-            .finally(() => {{
-                button.disabled = false;
-                button.textContent = '🚀 Тестировать бота';
-            }});
-    }}
+         function testBot() {{
+         var button = document.querySelector('button');
+         var result = document.getElementById('testResult');
+         
+         button.disabled = true;
+         button.textContent = '🔄 Тестируем...';
+         result.style.display = 'block';
+         result.innerHTML = '<p>🔄 Проверяем подключение к боту...</p>';
+         
+         fetch('/test_bot')
+             .then(response => response.json())
+             .then(data => {{
+                 if (data.success) {{
+                     result.style.backgroundColor = '#d4edda';
+                     result.style.color = '#155724';
+                     result.style.border = '1px solid #c3e6cb';
+                     result.innerHTML = `
+                         <h3>✅ Бот работает!</h3>
+                         <p><strong>Имя бота:</strong> ${{data.bot_info.result.first_name}}</p>
+                         <p><strong>Username:</strong> @${{data.bot_info.result.username}}</p>
+                         <p><strong>Статус:</strong> ${{data.status}}</p>
+                         <p><strong>Тестовое сообщение:</strong> ${{data.message}}</p>
+                     `;
+                 }} else {{
+                     result.style.backgroundColor = '#f8d7da';
+                     result.style.color = '#721c24';
+                     result.style.border = '1px solid #f5c6cb';
+                     result.innerHTML = `
+                         <h3>❌ Ошибка!</h3>
+                         <p><strong>Ошибка:</strong> ${{data.error}}</p>
+                         ${{data.response ? `<p><strong>Ответ:</strong> ${{data.response}}</p>` : ''}}
+                     `;
+                 }}
+             }})
+             .catch(error => {{
+                 result.style.backgroundColor = '#f8d7da';
+                 result.style.color = '#721c24';
+                 result.style.border = '1px solid #f5c6cb';
+                 result.innerHTML = `
+                     <h3>❌ Ошибка сети!</h3>
+                     <p><strong>Ошибка:</strong> ${{error.message}}</p>
+                 `;
+             }})
+             .finally(() => {{
+                 button.disabled = false;
+                 button.textContent = '🚀 Тестировать бота';
+             }});
+     }}
+     
+     function testNotion() {{
+         var button = document.querySelector('button[onclick="testNotion()"]');
+         var result = document.getElementById('notionResult');
+         
+         button.disabled = true;
+         button.textContent = '🔄 Создаем таск...';
+         result.style.display = 'block';
+         result.innerHTML = '<p>🔄 Создаем тестовую задачу в Notion...</p>';
+         
+         fetch('/test_notion')
+             .then(response => response.json())
+             .then(data => {{
+                 if (data.success) {{
+                     result.style.backgroundColor = '#d4edda';
+                     result.style.color = '#155724';
+                     result.style.border = '1px solid #c3e6cb';
+                     result.innerHTML = `
+                         <h3>✅ Задача создана в Notion!</h3>
+                         <p><strong>Название:</strong> ${{data.title}}</p>
+                         <p><strong>Пользователь:</strong> ${{data.username}}</p>
+                         <p><strong>Статус:</strong> ${{data.status}}</p>
+                         <p><strong>Время создания:</strong> ${{data.timestamp}}</p>
+                         ${{data.notion_url ? `<p><strong>Ссылка:</strong> <a href="${{data.notion_url}}" target="_blank">Открыть в Notion</a></p>` : ''}}
+                     `;
+                 }} else {{
+                     result.style.backgroundColor = '#f8d7da';
+                     result.style.color = '#721c24';
+                     result.style.border = '1px solid #f5c6cb';
+                     result.innerHTML = `
+                         <h3>❌ Ошибка создания задачи!</h3>
+                         <p><strong>Ошибка:</strong> ${{data.error}}</p>
+                         ${{data.details ? `<p><strong>Детали:</strong> ${{data.details}}</p>` : ''}}
+                         <p><strong>Проверьте:</strong></p>
+                         <ul>
+                             <li>NOTION_TOKEN настроен правильно</li>
+                             <li>NOTION_DATABASE_ID указан корректно</li>
+                             <li>База данных доступна для записи</li>
+                         </ul>
+                     `;
+                 }}
+             }})
+             .catch(error => {{
+                 result.style.backgroundColor = '#f8d7da';
+                 result.style.color = '#721c24';
+                 result.style.border = '1px solid #f5c6cb';
+                 result.innerHTML = `
+                     <h3>❌ Ошибка сети!</h3>
+                     <p><strong>Ошибка:</strong> ${{error.message}}</p>
+                 `;
+             }})
+             .finally(() => {{
+                 button.disabled = false;
+                 button.textContent = '📝 Создать тестовый таск в Notion';
+             }});
+     }}
+     
+     function restartBot() {{
+         var button = document.querySelector('button[onclick="restartBot()"]');
+         var result = document.getElementById('botControlResult');
+         
+         button.disabled = true;
+         button.textContent = '🔄 Перезапускаем...';
+         result.style.display = 'block';
+         result.innerHTML = '<p>🔄 Перезапускаем бота...</p>';
+         
+         fetch('/restart_bot')
+             .then(response => response.json())
+             .then(data => {{
+                 if (data.success) {{
+                     result.style.backgroundColor = '#d4edda';
+                     result.style.color = '#155724';
+                     result.style.border = '1px solid #c3e6cb';
+                     result.innerHTML = `
+                         <h3>✅ Бот перезапущен!</h3>
+                         <p><strong>Статус:</strong> ${{data.status}}</p>
+                         <p><strong>Время:</strong> ${{data.timestamp}}</p>
+                     `;
+                 }} else {{
+                     result.style.backgroundColor = '#f8d7da';
+                     result.style.color = '#721c24';
+                     result.style.border = '1px solid #f5c6cb';
+                     result.innerHTML = `
+                         <h3>❌ Ошибка перезапуска!</h3>
+                         <p><strong>Ошибка:</strong> ${{data.error}}</p>
+                     `;
+                 }}
+             }})
+             .catch(error => {{
+                 result.style.backgroundColor = '#f8d7da';
+                 result.style.color = '#721c24';
+                 result.style.border = '1px solid #f5c6cb';
+                 result.innerHTML = `
+                     <h3>❌ Ошибка сети!</h3>
+                     <p><strong>Ошибка:</strong> ${{error.message}}</p>
+                 `;
+             }})
+             .finally(() => {{
+                 button.disabled = false;
+                 button.textContent = '🔄 Перезапустить бота';
+             }});
+     }}
+     
+     function resetErrors() {{
+         var button = document.querySelector('button[onclick="resetErrors()"]');
+         var result = document.getElementById('botControlResult');
+         
+         button.disabled = true;
+         button.textContent = '🔧 Сбрасываем...';
+         result.style.display = 'block';
+         result.innerHTML = '<p>🔧 Сбрасываем счетчик ошибок...</p>';
+         
+         fetch('/reset_errors')
+             .then(response => response.json())
+             .then(data => {{
+                 if (data.success) {{
+                     result.style.backgroundColor = '#d4edda';
+                     result.style.color = '#155724';
+                     result.style.border = '1px solid #c3e6cb';
+                     result.innerHTML = `
+                         <h3>✅ Ошибки сброшены!</h3>
+                         <p><strong>Статус:</strong> ${{data.status}}</p>
+                         <p><strong>Счетчик ошибок:</strong> ${{data.error_count}}</p>
+                     `;
+                 }} else {{
+                     result.style.backgroundColor = '#f8d7da';
+                     result.style.color = '#721c24';
+                     result.style.border = '1px solid #f5c6cb';
+                     result.innerHTML = `
+                         <h3>❌ Ошибка сброса!</h3>
+                         <p><strong>Ошибка:</strong> ${{data.error}}</p>
+                     `;
+                 }}
+             }})
+             .catch(error => {{
+                 result.style.backgroundColor = '#f8d7da';
+                 result.style.color = '#721c24';
+                 result.style.border = '1px solid #f5c6cb';
+                 result.innerHTML = `
+                     <h3>❌ Ошибка сети!</h3>
+                     <p><strong>Ошибка:</strong> ${{error.message}}</p>
+                 `;
+             }})
+             .finally(() => {{
+                 button.disabled = false;
+                 button.textContent = '🔧 Сбросить ошибки';
+             }});
+     }}
     </script>
 </body>
 </html>"""
 
+def process_update_async(update):
+    """Обрабатывает обновление в отдельном потоке"""
+    global bot_error_count, telegram_app
+    try:
+        # Создаем новый event loop для этого потока
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Получаем бота
+        bot_app = get_or_create_bot_app()
+        if bot_app:
+            # Обрабатываем обновление
+            bot_app.process_update(update)
+            bot_error_count = 0  # Сбрасываем счетчик ошибок при успехе
+            print(f"✅ Update processed successfully")
+        else:
+            print("❌ Bot app not available")
+            bot_error_count += 1
+            
+    except Exception as e:
+        bot_error_count += 1
+        print(f"❌ Error processing update in thread: {e}")
+        
+        # Если слишком много ошибок, переинициализируем бота
+        if bot_error_count > 10:
+            print(f"🔄 Too many errors ({bot_error_count}), reinitializing bot")
+            try:
+                telegram_app = None
+                bot_app = get_or_create_bot_app()
+                if bot_app:
+                    bot_error_count = 0
+                    print("✅ Bot reinitialized successfully")
+            except Exception as reinit_error:
+                print(f"❌ Failed to reinitialize bot: {reinit_error}")
+    finally:
+        try:
+            loop.close()
+        except:
+            pass
+
+def send_message_sync(chat_id, text):
+    """Синхронная отправка сообщения через Telegram API"""
+    try:
+        bot_token = os.getenv('BOT_TOKEN')
+        if not bot_token:
+            print("❌ BOT_TOKEN not available")
+            return False
+            
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        
+        response = requests.post(url, json=data, timeout=10)
+        if response.status_code == 200:
+            print(f"✅ Message sent to {chat_id}")
+            return True
+        else:
+            print(f"❌ Failed to send message: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error sending message: {e}")
+        return False
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Обработчик вебхуков от Telegram"""
-    global telegram_app
-    if telegram_app is None:
-        telegram_app = create_bot_app()
+    global bot_running, bot_error_count
     
     try:
+        # Проверяем состояние бота
+        if bot_error_count > 5:
+            print(f"🔄 Too many errors ({bot_error_count}), resetting bot")
+            bot_error_count = 0
+            # Можно добавить переинициализацию бота здесь
+        
         # Обрабатываем обновление от Telegram
-        update = Update.de_json(request.get_json(), telegram_app.bot)
-        telegram_app.process_update(update)
+        update = Update.de_json(request.get_json(), None)  # Не передаем bot для избежания проблем
+        
+        # Запускаем обработку в отдельном потоке
+        executor.submit(process_update_async, update)
+        
+        print(f"✅ Webhook received and queued for processing")
         return 'OK'
+                
     except Exception as e:
-        print(f"Ошибка обработки вебхука: {e}")
+        bot_error_count += 1
+        print(f"❌ Ошибка обработки вебхука: {e}")
         return 'Error', 500
 
 @app.route('/test_bot')
@@ -316,28 +600,173 @@ def test_bot_endpoint():
     except Exception as e:
         return jsonify({'success': False, 'error': f'Ошибка: {str(e)}'})
 
+@app.route('/test_notion')
+def test_notion_endpoint():
+    """API endpoint для тестирования Notion интеграции"""
+    try:
+        notion_token = os.getenv('NOTION_TOKEN')
+        database_id = os.getenv('NOTION_DATABASE_ID')
+        
+        if not notion_token:
+            return jsonify({
+                'success': False, 
+                'error': 'NOTION_TOKEN не настроен',
+                'details': 'Добавьте NOTION_TOKEN в переменные окружения Railway'
+            })
+        
+        if not database_id:
+            return jsonify({
+                'success': False, 
+                'error': 'NOTION_DATABASE_ID не настроен',
+                'details': 'Добавьте NOTION_DATABASE_ID в переменные окружения Railway'
+            })
+        
+        # Создаем тестовую задачу
+        test_text = f"Тестовая задача от Railway - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        test_username = "Railway Test User"
+        
+        # Проверяем подключение к Notion API
+        headers = {
+            "Authorization": f"Bearer {notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        
+        # Сначала проверяем доступ к базе данных
+        db_url = f"https://api.notion.com/v1/databases/{database_id}"
+        db_response = requests.get(db_url, headers=headers, timeout=10)
+        
+        if db_response.status_code != 200:
+            return jsonify({
+                'success': False,
+                'error': f'Ошибка доступа к базе данных: {db_response.status_code}',
+                'details': db_response.text
+            })
+        
+        # Создаем тестовую задачу
+        success = create_notion_task(test_text, test_username, "Railway Test")
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'title': test_text,
+                'username': test_username,
+                'status': 'Задача создана успешно',
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'notion_url': f"https://notion.so/{database_id.replace('-', '')}"
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Не удалось создать задачу в Notion',
+                'details': 'Проверьте логи сервера для получения дополнительной информации'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'error': f'Ошибка: {str(e)}',
+            'details': 'Проверьте настройки Notion интеграции'
+        })
+
+@app.route('/health')
+def health_check():
+    """Проверка здоровья приложения"""
+    global bot_error_count
+    try:
+        bot_app = get_or_create_bot_app()
+        bot_status = "OK" if bot_app else "ERROR"
+        
+        return jsonify({
+            'status': 'healthy',
+            'bot_status': bot_status,
+            'error_count': bot_error_count,
+            'timestamp': datetime.now().isoformat(),
+            'environment': 'production' if os.getenv('RAILWAY_ENVIRONMENT') else 'development'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'error_count': bot_error_count,
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/restart_bot')
+def restart_bot():
+    """Перезапускает бота"""
+    global telegram_app, bot_error_count
+    try:
+        # Сбрасываем глобальные переменные
+        telegram_app = None
+        bot_error_count = 0
+        
+        # Переинициализируем бота
+        bot_app = get_or_create_bot_app()
+        
+        if bot_app:
+            return jsonify({
+                'success': True,
+                'status': 'Bot restarted successfully',
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to restart bot'
+            })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/reset_errors')
+def reset_errors():
+    """Сбрасывает счетчик ошибок"""
+    global bot_error_count
+    try:
+        old_count = bot_error_count
+        bot_error_count = 0
+        
+        return jsonify({
+            'success': True,
+            'status': 'Error counter reset',
+            'error_count': bot_error_count,
+            'previous_count': old_count,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
 @app.route('/set_webhook')
 def set_webhook():
     """Устанавливает вебхук для бота"""
-    global telegram_app
-    if telegram_app is None:
-        telegram_app = create_bot_app()
-    
-    # Получаем URL для вебхука
-    # Пытаемся получить из переменной окружения, иначе используем текущий домен
-    webhook_url = os.getenv('WEBHOOK_URL')
-    if not webhook_url:
-        # Определяем домен автоматически
-        if request:
-            # В контексте веб-запроса
-            webhook_url = f"{request.url_root.rstrip('/')}/webhook"
-        else:
-            # Fallback
-            webhook_url = 'https://dimkavatgbot-production.up.railway.app/webhook'
-    
-    # Для тестирования просто возвращаем успешный ответ
-    # В реальном деплое вебхук будет установлен через Telegram API
-    return f'Webhook готов к установке: {webhook_url}'
+    try:
+        # Получаем или создаем экземпляр бота
+        bot_app = get_or_create_bot_app()
+        
+        # Получаем URL для вебхука
+        # Пытаемся получить из переменной окружения, иначе используем текущий домен
+        webhook_url = os.getenv('WEBHOOK_URL')
+        if not webhook_url:
+            # Определяем домен автоматически
+            if request:
+                # В контексте веб-запроса
+                webhook_url = f"{request.url_root.rstrip('/')}/webhook"
+            else:
+                # Fallback
+                webhook_url = 'https://dimkavatgbot-production.up.railway.app/webhook'
+        
+        # Для тестирования просто возвращаем успешный ответ
+        # В реальном деплое вебхук будет установлен через Telegram API
+        return f'Webhook готов к установке: {webhook_url}'
+    except Exception as e:
+        print(f"Error in set_webhook: {e}")
+        return f'Error setting webhook: {e}', 500
 
 def main() -> None:
     """Основная функция для локального запуска"""
